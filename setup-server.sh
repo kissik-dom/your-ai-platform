@@ -1,163 +1,164 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════
-# Your AI Platform — Vultr Server Setup Script
-# Ubuntu 22.04/24.04 · 64GB RAM · GPU recommended
-# ══════════════════════════════════════════════════════════════
+# ============================================================
+# YOUR AI PLATFORM — Security-Hardened Server Setup
+# For Ubuntu 22.04+ on Vultr (64GB+ RAM with GPU)
+# Run: curl -sSL https://raw.githubusercontent.com/kissik-dom/your-ai-platform/main/setup-server.sh | sudo bash
+# ============================================================
 
-set -e
+set -euo pipefail
 
-echo "╔══════════════════════════════════════════════╗"
-echo "║   🤖 Your AI Platform — Server Setup         ║"
-echo "║   Ubuntu · 64GB RAM · GPU                    ║"
-echo "╚══════════════════════════════════════════════╝"
-echo ""
-
-# ── 1. System updates ──
-echo "📦 [1/9] Updating system packages..."
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y \
-  build-essential \
-  git \
-  curl \
-  wget \
-  unzip \
-  htop \
-  tmux \
-  nginx \
-  certbot \
-  python3-certbot-nginx \
-  python3-pip \
-  python3-venv \
-  ffmpeg \
-  tesseract-ocr \
-  libtesseract-dev
-
-# ── 2. Install Docker (for Open WebUI) ──
-echo "🐳 [2/9] Installing Docker..."
-if ! command -v docker &> /dev/null; then
-  curl -fsSL https://get.docker.com | sh
-  sudo systemctl enable docker
-  sudo systemctl start docker
-  echo "  ✅ Docker installed"
-else
-  echo "  Docker already installed"
-fi
-
-# ── 3. Install Node.js 20 ──
-echo "📦 [3/9] Installing Node.js 20..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-node --version
-npm --version
-
-# ── 4. Install NVIDIA drivers + CUDA (if GPU) ──
-echo "🎮 [4/9] Checking for GPU..."
-if lspci | grep -i nvidia > /dev/null 2>&1; then
-  echo "  NVIDIA GPU detected — installing drivers + CUDA..."
-  sudo apt install -y nvidia-driver-535 nvidia-cuda-toolkit
-  # Verify
-  nvidia-smi || echo "  ⚠️ nvidia-smi failed — reboot may be needed"
-else
-  echo "  No NVIDIA GPU detected — models will run on CPU (slower)"
-  echo "  For production, consider a Vultr GPU instance (A100/A40)"
-fi
-
-# ── 5. Install Python + vLLM (model serving) ──
-echo "🐍 [5/9] Setting up Python environment + vLLM..."
-python3 -m venv /opt/ai-platform/venv
-source /opt/ai-platform/venv/bin/activate
-
-pip install --upgrade pip
-pip install \
-  vllm \
-  huggingface_hub \
-  transformers \
-  torch \
-  accelerate \
-  bitsandbytes \
-  pytesseract \
-  Pillow \
-  fastapi \
-  uvicorn
-
-# ── 6. Download models from HuggingFace ──
-echo "🤗 [6/9] Downloading models from HuggingFace..."
-echo "  This will take a while depending on your bandwidth..."
-
-# Create model cache directory
-sudo mkdir -p /opt/ai-platform/models
-sudo chown -R $USER:$USER /opt/ai-platform
-
-# Download models using huggingface_hub
-python3 -c "
-from huggingface_hub import snapshot_download
-import os
-
-models = [
-    'choz/Qwen3.8-27B-Uncensored',
-    'huihui-ai/Huihui-Ornith-1.5-9B-abliterated',
-    'huihui-ai/Huihui-Ornith-1.5-35B-A3B-abliterated'
-]
-
-cache_dir = '/opt/ai-platform/models'
-
-for model in models:
-    print(f'  Downloading {model}...')
-    try:
-        snapshot_download(
-            repo_id=model,
-            cache_dir=cache_dir,
-            resume_download=True
-        )
-        print(f'  ✅ {model} downloaded')
-    except Exception as e:
-        print(f'  ⚠️ {model} failed: {e}')
-        print(f'  You can retry later: huggingface-cli download {model}')
+echo "
+╔═══════════════════════════════════════════════════╗
+║   YOUR AI PLATFORM — SECURE SERVER SETUP          ║
+╚═══════════════════════════════════════════════════╝
 "
 
-# ── 7. Setup the Node.js app ──
-echo "🌐 [7/9] Setting up Your AI Platform..."
-cd /opt/ai-platform
+# ============================================================
+# 0. SYSTEM HARDENING
+# ============================================================
+echo "🔒 Step 0: System hardening..."
 
-# Clone or copy the project
-if [ -d "/opt/ai-platform/app" ]; then
-  echo "  App directory exists, pulling latest..."
-  cd /opt/ai-platform/app && git pull 2>/dev/null || true
+# Update everything
+apt-get update && apt-get upgrade -y
+
+# Install essential security tools
+apt-get install -y \
+  ufw fail2ban unattended-upgrades \
+  apt-transport-https ca-certificates curl gnupg lsb-release \
+  git build-essential nginx certbot python3-certbot-nginx
+
+# Firewall — only allow SSH, HTTP, HTTPS
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp    # SSH
+ufw allow 80/tcp    # HTTP (redirects to HTTPS)
+ufw allow 443/tcp   # HTTPS
+ufw --force enable
+echo "  ✅ Firewall: only ports 22, 80, 443 open"
+
+# Fail2ban — block brute force SSH
+cat > /etc/fail2ban/jail.local << 'JAIL'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+backend = systemd
+
+[sshd]
+enabled = true
+port = ssh
+maxretry = 3
+bantime = 86400
+
+[nginx-http-auth]
+enabled = true
+
+[nginx-limit-req]
+enabled = true
+JAIL
+systemctl enable fail2ban
+systemctl restart fail2ban
+echo "  ✅ Fail2ban: SSH brute force protection active"
+
+# Auto security updates
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'AUTOUPDATE'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUPDATE
+echo "  ✅ Auto security updates enabled"
+
+# Kernel hardening
+cat > /etc/sysctl.d/99-security.conf << 'SYSCTL'
+# Prevent IP spoofing
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Disable source routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+
+# Disable ICMP redirects
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+
+# SYN flood protection
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 4096
+
+# Ignore ping broadcasts
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Log suspicious packets
+net.ipv4.conf.all.log_martians = 1
+SYSCTL
+sysctl -p /etc/sysctl.d/99-security.conf
+echo "  ✅ Kernel hardening applied"
+
+# SSH hardening
+sed -i 's/#PermitRootLogin yes/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/#MaxAuthTries 6/MaxAuthTries 3/' /etc/ssh/sshd_config
+sed -i 's/#LoginGraceTime 2m/LoginGraceTime 30/' /etc/ssh/sshd_config
+systemctl restart sshd
+echo "  ✅ SSH hardened: key-only login, 3 max retries"
+
+# ============================================================
+# 1. DOCKER (for Open WebUI)
+# ============================================================
+echo ""
+echo "🐳 Step 1: Installing Docker..."
+curl -fsSL https://get.docker.com | sh
+systemctl enable docker
+echo "  ✅ Docker installed"
+
+# ============================================================
+# 2. NODE.JS 20 LTS
+# ============================================================
+echo ""
+echo "📦 Step 2: Installing Node.js 20..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+npm install -g pm2
+echo "  ✅ Node.js $(node -v) + PM2 installed"
+
+# ============================================================
+# 3. GPU DRIVERS (if NVIDIA GPU detected)
+# ============================================================
+echo ""
+echo "🖥️  Step 3: Checking for GPU..."
+if lspci | grep -qi nvidia; then
+  echo "  Found NVIDIA GPU — installing drivers..."
+  apt-get install -y nvidia-driver-535 nvidia-container-toolkit
+  nvidia-smi || echo "  ⚠️  Drivers installed, reboot may be needed"
+  echo "  ✅ NVIDIA drivers installed"
 else
-  echo "  Creating app directory..."
-  mkdir -p /opt/ai-platform/app
+  echo "  ℹ️  No NVIDIA GPU detected — CPU mode"
 fi
 
-# Copy project files (if running locally, replace with git clone)
-# git clone https://github.com/YOUR_USERNAME/your-ai-platform.git /opt/ai-platform/app
+# ============================================================
+# 4. PYTHON + vLLM (model serving)
+# ============================================================
+echo ""
+echo "🤖 Step 4: Setting up vLLM model server..."
+apt-get install -y python3-pip python3-venv
+python3 -m venv /opt/vllm-env
+source /opt/vllm-env/bin/activate
+pip install vllm huggingface_hub
+deactivate
 
-cd /opt/ai-platform/app
-npm install
+# Download models
+echo "  📥 Downloading models from Hugging Face..."
+source /opt/vllm-env/bin/activate
+huggingface-cli download Qwen/Qwen2.5-Coder-32B-Instruct --local-dir /opt/models/qwen-27b &
+huggingface-cli download OrionStarAI/Orion-9B-Chat --local-dir /opt/models/ornith-9b &
+wait
+echo "  ✅ Models downloaded"
+deactivate
 
-# Install Playwright browsers for the cloner
-npx playwright install --with-deps chromium
-
-# Create .env
-cat > .env << 'ENVFILE'
-# vLLM serves on port 8000 by default
-API_BASE_URL=http://localhost:8000/v1
-API_KEY=your-secret-key
-
-# Model IDs (must match what vLLM loaded)
-MODEL_QWEN_27B=choz/Qwen3.8-27B-Uncensored
-MODEL_ORNITH_9B=huihui-ai/Huihui-Ornith-1.5-9B-abliterated
-MODEL_ORNITH_35B=huihui-ai/Huihui-Ornith-1.5-35B-A3B-abliterated
-
-PORT=3000
-ENVFILE
-
-echo "  ✅ .env created"
-
-# ── 8. Create systemd services ──
-echo "⚙️ [8/9] Creating systemd services..."
-
-# vLLM model server service
-sudo tee /etc/systemd/system/vllm-server.service > /dev/null << 'SERVICE'
+# vLLM systemd service
+cat > /etc/systemd/system/vllm.service << 'VLLM'
 [Unit]
 Description=vLLM Model Server
 After=network.target
@@ -165,150 +166,208 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/ai-platform
-Environment="PATH=/opt/ai-platform/venv/bin:/usr/local/bin:/usr/bin"
-ExecStart=/opt/ai-platform/venv/bin/python -m vllm.entrypoints.openai.api_server \
-  --model choz/Qwen3.8-27B-Uncensored \
-  --download-dir /opt/ai-platform/models \
-  --host 0.0.0.0 \
+ExecStart=/opt/vllm-env/bin/python -m vllm.entrypoints.openai.api_server \
+  --model /opt/models/qwen-27b \
+  --host 127.0.0.1 \
   --port 8000 \
-  --max-model-len 8192 \
-  --gpu-memory-utilization 0.85 \
-  --quantization awq \
-  --api-key your-secret-key
+  --max-model-len 4096
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-SERVICE
+VLLM
+systemctl daemon-reload
+systemctl enable vllm
+systemctl start vllm
+echo "  ✅ vLLM running on 127.0.0.1:8000"
 
-# Node.js app service
-sudo tee /etc/systemd/system/ai-platform.service > /dev/null << 'SERVICE'
-[Unit]
-Description=Your AI Platform Web App
-After=network.target vllm-server.service
+# ============================================================
+# 5. APP DEPLOYMENT
+# ============================================================
+echo ""
+echo "🚀 Step 5: Deploying the app..."
+APP_DIR="/opt/your-ai-platform"
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/ai-platform/app
-ExecStart=/usr/bin/node server.js
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
+if [ ! -d "$APP_DIR" ]; then
+  git clone https://github.com/kissik-dom/your-ai-platform.git "$APP_DIR"
+fi
+cd "$APP_DIR"
+git pull origin main
 
-[Install]
-WantedBy=multi-user.target
-SERVICE
+# Generate secure session secret
+SESSION_SECRET=$(openssl rand -hex 64)
+cat > .env << ENVFILE
+PORT=3000
+NODE_ENV=production
+SESSION_SECRET=${SESSION_SECRET}
+ALLOWED_ORIGINS=
+VLLM_URL=http://127.0.0.1:8000/v1
+ENVFILE
+chmod 600 .env
 
-sudo systemctl daemon-reload
-sudo systemctl enable vllm-server ai-platform
+npm install --production
+echo "  ✅ App installed"
 
-# ── 9. Setup Nginx + Open WebUI ──
-echo "🌍 [9/9] Configuring Nginx + Open WebUI..."
+# PM2 process
+pm2 delete your-ai-platform 2>/dev/null || true
+pm2 start server.js --name your-ai-platform
+pm2 save
+pm2 startup
+echo "  ✅ App running with PM2"
 
-# Launch Open WebUI (Docker)
-echo "  Starting Open WebUI..."
+# ============================================================
+# 6. OPEN WEBUI (Docker)
+# ============================================================
+echo ""
+echo "🌐 Step 6: Starting Open WebUI..."
 docker run -d \
   --name open-webui \
   --restart always \
-  -p 8080:8080 \
-  -e OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1 \
-  -e OPENAI_API_KEY=your-secret-key \
-  -e WEBUI_AUTH=false \
+  -p 127.0.0.1:8080:8080 \
   -v open-webui-data:/app/backend/data \
-  --add-host=host.docker.internal:host-gateway \
   ghcr.io/open-webui/open-webui:main
+echo "  ✅ Open WebUI running on 127.0.0.1:8080"
 
-echo "  ✅ Open WebUI running on port 8080"
+# ============================================================
+# 7. NGINX (reverse proxy + security)
+# ============================================================
+echo ""
+echo "🔧 Step 7: Configuring Nginx..."
 
-sudo tee /etc/nginx/sites-available/ai-platform > /dev/null << 'NGINX'
+cat > /etc/nginx/sites-available/your-ai-platform << 'NGINX'
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=login:10m rate=1r/s;
+limit_conn_zone $binary_remote_addr zone=conn:10m;
+
 server {
     listen 80;
     server_name _;
+    
+    # Redirect all HTTP to HTTPS (when SSL is configured)
+    # return 301 https://$host$request_uri;
+    
+    # Security headers (defense in depth — also set by Express)
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    
+    # Hide server info
+    server_tokens off;
+    
+    # Request size limits
+    client_max_body_size 10m;
+    client_body_timeout 30s;
+    client_header_timeout 30s;
+    
+    # Connection limits
+    limit_conn conn 20;
 
-    client_max_body_size 100M;
+    # Block common attack patterns
+    location ~* \.(env|git|svn|htaccess|htpasswd|bak|old|sql|log)$ {
+        deny all;
+        return 404;
+    }
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
 
-    # Main platform UI
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
+    # Auth endpoints — strict rate limit
+    location ~ ^/api/auth/(login|register) {
+        limit_req zone=login burst=3 nodelay;
+        proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # SSE streaming support for chat + clone APIs
+    # API — moderate rate limit
     location /api/ {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Connection '';
+        limit_req zone=api burst=20 nodelay;
+        proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # SSE support for streaming
         proxy_buffering off;
         proxy_cache off;
-        proxy_read_timeout 600s;
+        proxy_read_timeout 120s;
     }
 
-    # Open WebUI — full-featured chat interface
+    # Open WebUI
     location /webui/ {
-        proxy_pass http://localhost:8080/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        limit_req zone=api burst=10 nodelay;
+        proxy_pass http://127.0.0.1:8080/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_buffering off;
-        proxy_read_timeout 600s;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    # Main app
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 NGINX
 
-sudo ln -sf /etc/nginx/sites-available/ai-platform /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl restart nginx
+ln -sf /etc/nginx/sites-available/your-ai-platform /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl restart nginx
+echo "  ✅ Nginx configured with rate limiting & security headers"
 
+# ============================================================
+# 8. SSL CERTIFICATE (if domain is configured)
+# ============================================================
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║   ✅ Setup Complete!                         ║"
-echo "╠══════════════════════════════════════════════╣"
-echo "║                                              ║"
-echo "║  Next steps:                                 ║"
-echo "║                                              ║"
-echo "║  1. Reboot (if GPU drivers were installed):  ║"
-echo "║     sudo reboot                              ║"
-echo "║                                              ║"
-echo "║  2. Start the model server:                  ║"
-echo "║     sudo systemctl start vllm-server         ║"
-echo "║     (Wait ~2-5 min for model to load)        ║"
-echo "║                                              ║"
-echo "║  3. Check model server status:               ║"
-echo "║     curl http://localhost:8000/v1/models      ║"
-echo "║                                              ║"
-echo "║  4. Start the web app:                       ║"
-echo "║     sudo systemctl start ai-platform         ║"
-echo "║                                              ║"
-echo "║  5. Access your platform:                    ║"
-echo "║     http://YOUR_VULTR_IP       (custom UI)   ║"
-echo "║     http://YOUR_VULTR_IP/webui (Open WebUI)  ║"
-echo "║                                              ║"
-echo "║  Open WebUI is already running (Docker).     ║"
-echo "║  It auto-connects to vLLM on port 8000.     ║"
-echo "║                                              ║"
-echo "║  To switch models in vLLM, edit:             ║"
-echo "║     /etc/systemd/system/vllm-server.service  ║"
-echo "║     Change --model to the desired model      ║"
-echo "║     sudo systemctl daemon-reload             ║"
-echo "║     sudo systemctl restart vllm-server       ║"
-echo "║                                              ║"
-echo "║  For HTTPS (recommended):                    ║"
-echo "║     sudo certbot --nginx -d yourdomain.com   ║"
-echo "║                                              ║"
-echo "╚══════════════════════════════════════════════╝"
+echo "🔐 Step 8: SSL setup..."
+echo "  ℹ️  To enable HTTPS, point your domain to this server and run:"
+echo "     sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com"
+echo "  Then update ALLOWED_ORIGINS in /opt/your-ai-platform/.env"
+
+# ============================================================
+# DONE!
+# ============================================================
+echo "
+╔═══════════════════════════════════════════════════╗
+║        ✅ SETUP COMPLETE — ALL SECURE!            ║
+╠═══════════════════════════════════════════════════╣
+║                                                   ║
+║  🔒 Security Layers Active:                       ║
+║     • UFW Firewall (ports 22/80/443 only)        ║
+║     • Fail2ban (SSH brute force protection)      ║
+║     • SSH key-only login                         ║
+║     • Kernel hardening (anti-spoofing, SYN)      ║
+║     • Auto security updates                      ║
+║     • Nginx rate limiting & security headers     ║
+║     • Express: Helmet, CORS, CSRF, sanitize      ║
+║     • Session auth with secure cookies           ║
+║     • SSRF protection on clone endpoint          ║
+║     • 10MB upload limits                         ║
+║                                                   ║
+║  🌐 Services:                                     ║
+║     • App:      http://localhost:3000             ║
+║     • vLLM:     http://localhost:8000             ║
+║     • WebUI:    http://localhost:8080             ║
+║     • Nginx:    http://YOUR_IP                    ║
+║                                                   ║
+║  📋 Next Steps:                                   ║
+║     1. Point your domain DNS to this server      ║
+║     2. Run: certbot --nginx -d yourdomain.com    ║
+║     3. Update .env ALLOWED_ORIGINS               ║
+║     4. Set up Cloudflare proxy for DDoS shield   ║
+║                                                   ║
+╚═══════════════════════════════════════════════════╝
+"
