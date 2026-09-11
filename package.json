@@ -1,0 +1,24 @@
+{
+  "name": "your-ai-platform",
+  "version": "1.0.0",
+  "description": "AI Platform — Chat + Code + Cloner with Qwen & Ornith models",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "clone:ditto": "npx ditto-site",
+    "clone:deep": "node cloner/deep-clone.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "node-fetch": "^3.3.2",
+    "playwright": "^1.44.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "ditto.site": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
