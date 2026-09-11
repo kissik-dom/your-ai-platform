@@ -1,24 +1,28 @@
 {
   "name": "your-ai-platform",
-  "version": "1.0.0",
-  "description": "AI Platform — Chat + Code + Cloner with Qwen & Ornith models",
+  "version": "2.0.0",
+  "description": "Security-hardened AI Platform — Chat + Code + Cloner",
+  "main": "server.js",
   "scripts": {
+    "start": "NODE_ENV=production node server.js",
     "dev": "node server.js",
-    "start": "node server.js",
-    "clone:ditto": "npx ditto-site",
-    "clone:deep": "node cloner/deep-clone.js"
+    "audit": "npm audit --production",
+    "test:security": "node security-test.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "express": "^4.21.0",
+    "helmet": "^7.1.0",
     "cors": "^2.8.5",
-    "node-fetch": "^3.3.2",
-    "playwright": "^1.44.0",
+    "express-rate-limit": "^7.4.0",
+    "express-slow-down": "^2.0.3",
+    "express-session": "^1.18.0",
+    "node-fetch": "^2.7.0",
+    "playwright": "^1.47.0",
+    "tesseract.js": "^5.1.0",
     "dotenv": "^16.4.5"
   },
-  "devDependencies": {
-    "ditto.site": "latest"
-  },
   "engines": {
-    "node": ">=18"
-  }
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
 }

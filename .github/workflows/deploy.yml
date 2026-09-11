@@ -3,47 +3,21 @@ name: Deploy to Server
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to server via SSH
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
-            set -e
-            echo "🚀 Starting deployment..."
-
-            # Navigate to app directory (create if first deploy)
-            APP_DIR="/opt/your-ai-platform"
-            if [ ! -d "$APP_DIR" ]; then
-              echo "📦 First deploy — cloning repo..."
-              git clone https://github.com/kissik-dom/your-ai-platform.git "$APP_DIR"
-              cd "$APP_DIR"
-              npm install
-            else
-              echo "🔄 Pulling latest code..."
-              cd "$APP_DIR"
-              git fetch origin main
-              git reset --hard origin/main
-              npm install
-            fi
-
-            # Restart the Node app service if it exists
-            if systemctl is-active --quiet your-ai-platform; then
-              echo "♻️ Restarting app service..."
-              sudo systemctl restart your-ai-platform
-            else
-              echo "▶️ Starting app with PM2..."
-              npx pm2 stop your-ai-platform 2>/dev/null || true
-              npx pm2 start server.js --name your-ai-platform
-              npx pm2 save
-            fi
-
-            echo "✅ Deployment complete!"
+            cd /opt/your-ai-platform
+            git fetch origin main
+            git reset --hard origin/main
+            npm install --production
+            pm2 restart your-ai-platform
+            echo "✅ Deployed $(git log -1 --format='%h %s')"
