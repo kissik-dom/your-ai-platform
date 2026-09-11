@@ -27,17 +27,19 @@ class DeepCloner {
     this.context = null;
     this.page = null;
     this.assets = { css: [], js: [], images: [], fonts: [] };
+    this.onProgress = options.onProgress || (() => {});
   }
 
   log(step, msg) {
     const ts = new Date().toISOString().slice(11, 19);
     console.log(`[${ts}] [${step}] ${msg}`);
+    this.onProgress(`[${step}] ${msg}`);
   }
 
   async init() {
     this.log('INIT', 'Launching browser...');
     this.browser = await chromium.launch({
-      headless: !this.requireAuth, // Visible browser for login
+      headless: !this.requireAuth,
       args: ['--window-size=1440,900']
     });
 
@@ -48,7 +50,6 @@ class DeepCloner {
 
     this.page = await this.context.newPage();
 
-    // Ensure output directory
     if (!existsSync(this.outputDir)) {
       mkdirSync(this.outputDir, { recursive: true });
     }
@@ -63,7 +64,6 @@ class DeepCloner {
     this.log('AUTH', '🔐 Browser is open — please log in manually.');
     this.log('AUTH', '   Waiting up to 2 minutes for login completion...');
 
-    // Wait for a navigation event (user logs in and gets redirected)
     try {
       await this.page.waitForNavigation({ timeout: 120000 });
       this.log('AUTH', '✅ Login detected — continuing with authenticated session.');
@@ -71,7 +71,6 @@ class DeepCloner {
       this.log('AUTH', '⚠️ Login timeout — proceeding with current state.');
     }
 
-    // Save cookies for reuse
     const cookies = await this.context.cookies();
     writeFileSync(
       join(this.outputDir, 'cookies.json'),
@@ -89,12 +88,10 @@ class DeepCloner {
 
     try {
       await this.page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-      await this.page.waitForTimeout(2000); // Let dynamic content settle
+      await this.page.waitForTimeout(2000);
 
-      // Extract full HTML
       const html = await this.page.content();
 
-      // Extract inline + external CSS
       const css = await this.page.evaluate(() => {
         const allCSS = [];
         for (const sheet of document.styleSheets) {
@@ -108,7 +105,6 @@ class DeepCloner {
         return allCSS;
       });
 
-      // Extract all links for crawling
       const links = await this.page.evaluate((base) => {
         const baseUrl = new URL(base);
         return Array.from(document.querySelectorAll('a[href]'))
@@ -118,10 +114,8 @@ class DeepCloner {
           .filter(href => href && new URL(href).hostname === baseUrl.hostname);
       }, this.baseUrl);
 
-      // Screenshot
       const screenshot = await this.page.screenshot({ fullPage: true, type: 'png' });
 
-      // Save files
       const safeName = this.urlToFilename(url);
       const pageDir = join(this.outputDir, safeName);
       if (!existsSync(pageDir)) mkdirSync(pageDir, { recursive: true });
@@ -132,7 +126,6 @@ class DeepCloner {
 
       this.log('SAVE', `Saved: ${safeName}/ (HTML + CSS + screenshot)`);
 
-      // Crawl linked pages
       for (const link of links) {
         if (this.visited.size >= this.maxPages) break;
         await this.clonePage(link);
@@ -163,7 +156,6 @@ class DeepCloner {
     const assetsDir = join(this.outputDir, '_assets');
     if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true });
 
-    // Download images
     for (const imgUrl of assets.images) {
       try {
         const response = await this.page.request.get(imgUrl);
@@ -207,9 +199,15 @@ class DeepCloner {
   }
 }
 
+// Export for server.js
+export function cloneSite(options) {
+  const cloner = new DeepCloner(options);
+  return cloner.run();
+}
+
 // ── CLI ──
 const args = process.argv.slice(2);
-if (args.length === 0) {
+if (args.length === 0 && !process.env.IMPORTED) {
   console.log(`
   Deep Clone — Authenticated Website Cloner
   
@@ -229,15 +227,17 @@ if (args.length === 0) {
   process.exit(0);
 }
 
-const url = args[0];
-const auth = args.includes('--auth');
-const pagesIdx = args.indexOf('--pages');
-const pages = pagesIdx > -1 ? parseInt(args[pagesIdx + 1]) : 10;
-const outputIdx = args.indexOf('--output');
-const output = outputIdx > -1 ? args[outputIdx + 1] : './cloned-site';
+if (args.length > 0) {
+  const url = args[0];
+  const auth = args.includes('--auth');
+  const pagesIdx = args.indexOf('--pages');
+  const pages = pagesIdx > -1 ? parseInt(args[pagesIdx + 1]) : 10;
+  const outputIdx = args.indexOf('--output');
+  const output = outputIdx > -1 ? args[outputIdx + 1] : './cloned-site';
 
-const cloner = new DeepCloner({ url, auth, pages, output });
-cloner.run().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+  const cloner = new DeepCloner({ url, auth, pages, output });
+  cloner.run().catch(err => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
